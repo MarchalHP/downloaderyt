@@ -20,12 +20,21 @@ Un logiciel en Python permettant de télécharger des vidéos ou playlists YouTu
 
 ## ⚙️ Installation
 
--   telecharger le zip depuit : 
+### 1️⃣ simple
+
+-   telecharger le zip depuit : https://github.com/MarchalHP/downloaderyt/raw/refs/heads/main/downloaderyt.zip
+-   décompresser le zip
+-   fini
+
+### 2️⃣ chiant
+
+-   telecharger le zip depuit : https://github.com/MarchalHP/downloaderyt.git
 -   décompresser le zip
 -   Ouvre PowerShell dans le dossier du programme, puis :
 -       >>  python -m venv venv
 -       >>  venv\Scripts\activate
 -       >>  pip install -r requirements.txt
+-   fini
 
 ## ▶️ Lancement du programme
 
