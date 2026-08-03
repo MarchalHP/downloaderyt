@@ -1,0 +1,24 @@
+# Environnement virtuel
+venv/
+env/
+.venv/
+
+# Fichiers Python compilés
+__pycache__/
+*.pyc
+*.pyo
+
+# Config et fichiers générés à l'exécution
+config.json
+progression.json
+*.log
+
+# Dossier de téléchargement (contenu utilisateur)
+downloads/
+
+# Fichiers temporaires de tâches
+taches_temp*.json
+
+# OS
+.DS_Store
+Thumbs.db
