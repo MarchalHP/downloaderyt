@@ -23,9 +23,9 @@ Un logiciel en Python permettant de télécharger des vidéos ou playlists YouTu
 -   telecharger le zip depuit : 
 -   décompresser le zip
 -   Ouvre PowerShell dans le dossier du programme, puis :
-    >>  python -m venv venv
-    >>  venv\Scripts\activate
-    >>  pip install -r requirements.txt
+-       >>  python -m venv venv
+-       >>  venv\Scripts\activate
+-       >>  pip install -r requirements.txt
 
 ## ▶️ Lancement du programme
 
