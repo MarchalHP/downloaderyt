@@ -1,0 +1,10 @@
+{
+    "dossier_sortie_defaut": "downloads",
+    "format": "mp3",
+    "qualite": "320",
+    "retries": 3,
+    "nom_fichier": "%(playlist_index)02d - %(title)s.%(ext)s",
+    "silencieux": false,
+    "log": "",
+    "taches": []
+}
