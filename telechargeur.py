@@ -12,7 +12,19 @@ import yt_dlp
 import shutil
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from mutagen import File as MutagenFile
+import imageio_ffmpeg
 
+def obtenir_chemin_ffmpeg():
+    """
+    Récupère (et télécharge si besoin) le binaire ffmpeg via imageio-ffmpeg.
+    Retourne le chemin absolu vers l'exécutable.
+    """
+    try:
+        chemin = imageio_ffmpeg.get_ffmpeg_exe()
+        return chemin
+    except Exception as e:
+        print(f"⚠️  Impossible de récupérer ffmpeg automatiquement : {e}")
+        return None
 # ---------------------------------------------------------
 # Utilitaires généraux
 # ---------------------------------------------------------
@@ -132,56 +144,27 @@ def verifier_ffmpeg(afficher_message=True):
 # Construction des options yt-dlp
 # ---------------------------------------------------------
 
-def construire_options(config, dossier_sortie, nom_playlist=None, est_playlist=False):
-    """
-    Construit les options pour yt-dlp.
-    est_playlist : indique si c'est une playlist ou une vidéo simple.
-    """
-
-    if not os.path.exists(dossier_sortie):
-        os.makedirs(dossier_sortie)
-        print(f"📁 Dossier créé : {dossier_sortie}")
-
-    postprocessors = [
-        {
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': config['format'],
-            'preferredquality': config['qualite'],
-        },
-        {
-            'key': 'FFmpegMetadata',
-            'add_metadata': True,
-        },
-        {
-            'key': 'EmbedThumbnail',
-        },
-    ]
+def construire_options(config, dossier_sortie, hook_progression=None):
+    chemin_ffmpeg = obtenir_chemin_ffmpeg()
 
     options = {
         'format': 'bestaudio/best',
-        'postprocessors': postprocessors,
-        'writethumbnail': True,
-        'outtmpl': os.path.join(dossier_sortie, config['nom_fichier']),
-        'progress_hooks': [hook_progression],
-        'ignoreerrors': True,
+        'outtmpl': os.path.join(dossier_sortie, '%(title)s.%(ext)s'),
         'quiet': config['silencieux'],
         'no_warnings': config['silencieux'],
-        'retries': config['retries'],
-        'fragment_retries': config['retries'],
-        'noplaylist': not est_playlist,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': config['format_audio'],
+            'preferredquality': config['qualite_audio'],
+        }],
     }
 
-    # --- Métadonnées personnalisées ---
-    regles = [
-        # Artiste = nom de la chaîne YouTube (uploader)
-        '%(uploader)s:(?P<meta_artist>.+)',
-    ]
+    # Indique explicitement où trouver ffmpeg si on l'a récupéré
+    if chemin_ffmpeg:
+        options['ffmpeg_location'] = chemin_ffmpeg
 
-    if est_playlist:
-        # Numéro de piste = position dans la playlist
-        regles.append('%(playlist_index)s:(?P<meta_track>.+)')
-
-    options['parse_metadata'] = regles
+    if hook_progression:
+        options['progress_hooks'] = [hook_progression]
 
     return options
 
