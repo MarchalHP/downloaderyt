@@ -4,27 +4,74 @@ Gère :
 - L'organisation automatique des dossiers (playlist vs vidéo simple)
 - L'intégration des métadonnées et miniatures dans les fichiers audio
 - La correction des numéros de piste après téléchargement
+- La récupération automatique de ffmpeg (via imageio-ffmpeg)
 """
 
 import os
 import re
-import yt_dlp
 import shutil
+import yt_dlp
+import imageio_ffmpeg
 from urllib.parse import urlparse, urlunparse, parse_qs, urlencode
 from mutagen import File as MutagenFile
-import imageio_ffmpeg
+
+
+# ---------------------------------------------------------
+# Gestion de ffmpeg
+# ---------------------------------------------------------
 
 def obtenir_chemin_ffmpeg():
     """
-    Récupère (et télécharge si besoin) le binaire ffmpeg via imageio-ffmpeg.
-    Retourne le chemin absolu vers l'exécutable.
+    Récupère le chemin d'un binaire ffmpeg utilisable, en essayant
+    plusieurs sources dans l'ordre :
+    1. imageio-ffmpeg (télécharge un binaire portable si besoin)
+    2. Un fichier ffmpeg.exe / ffmpeg présent à côté du programme
+    3. Le PATH système
+    Retourne le chemin trouvé, ou None si rien ne fonctionne.
     """
+    # 1. imageio-ffmpeg (le plus fiable, se télécharge automatiquement)
     try:
         chemin = imageio_ffmpeg.get_ffmpeg_exe()
-        return chemin
-    except Exception as e:
-        print(f"⚠️  Impossible de récupérer ffmpeg automatiquement : {e}")
-        return None
+        if chemin and os.path.isfile(chemin):
+            return chemin
+    except Exception:
+        pass
+
+    # 2. Un ffmpeg local, placé manuellement dans le dossier du programme
+    dossier_programme = os.path.dirname(os.path.abspath(__file__))
+    for nom in ("ffmpeg.exe", "ffmpeg"):
+        chemin_local = os.path.join(dossier_programme, nom)
+        if os.path.isfile(chemin_local):
+            return chemin_local
+
+    # 3. Le PATH système
+    chemin_systeme = shutil.which("ffmpeg")
+    if chemin_systeme:
+        return chemin_systeme
+
+    return None
+
+
+def verifier_ffmpeg(afficher_message=True):
+    """
+    Vérifie que ffmpeg est disponible (peu importe la source).
+    Retourne True/False.
+    """
+    chemin_ffmpeg = obtenir_chemin_ffmpeg()
+
+    if chemin_ffmpeg is None:
+        if afficher_message:
+            print("\n❌ ERREUR : ffmpeg n'est pas disponible.")
+            print("   Solutions possibles :")
+            print("   1. Vérifie ta connexion internet et relance le programme")
+            print("      (ffmpeg se télécharge automatiquement au premier lancement)")
+            print("   2. Télécharge ffmpeg.exe manuellement et place-le dans le")
+            print("      dossier du programme : https://ffmpeg.org/download.html")
+        return False
+
+    return True
+
+
 # ---------------------------------------------------------
 # Utilitaires généraux
 # ---------------------------------------------------------
@@ -38,7 +85,6 @@ def nettoyer_url_video_simple(url):
     morceaux = urlparse(url)
     parametres = parse_qs(morceaux.query)
 
-    # On retire les paramètres liés à la playlist
     parametres.pop('list', None)
     parametres.pop('index', None)
 
@@ -53,10 +99,7 @@ def nettoyer_url_video_simple(url):
         morceaux.fragment
     ))
 
-    # Si l'URL nettoyée finit par un "?" vide, on l'enlève
-    url_nettoyee = url_nettoyee.rstrip('?')
-
-    return url_nettoyee
+    return url_nettoyee.rstrip('?')
 
 
 def hook_progression(d):
@@ -65,9 +108,8 @@ def hook_progression(d):
         pourcentage = d.get('_percent_str', 'N/A')
         vitesse = d.get('_speed_str', 'N/A')
         print(f"\r⬇️  {pourcentage} - Vitesse : {vitesse}", end='')
-
     elif d['status'] == 'finished':
-        print(f"\n✅ Téléchargement terminé, conversion en cours...")
+        print("\n✅ Téléchargement terminé, conversion en cours...")
 
 
 def ecrire_log(chemin_log, message):
@@ -82,16 +124,13 @@ def nettoyer_nom_dossier(nom):
     Nettoie une chaîne pour qu'elle soit utilisable comme nom de dossier.
     Enlève les caractères interdits sur Windows/Mac/Linux.
     """
-    nom_nettoye = re.sub(r'[\\/*?:"<>|]', "", nom)
-    return nom_nettoye.strip()
+    return re.sub(r'[\\/*?:"<>|]', "", nom).strip()
 
 
 def est_une_playlist(url):
-    """
-    Détermine si une URL correspond à une playlist ou une vidéo simple.
-    On regarde simplement si 'list=' est présent dans l'URL.
-    """
+    """Détermine si une URL correspond à une playlist ou une vidéo simple."""
     return "list=" in url
+
 
 # ---------------------------------------------------------
 # Gestion des playlists et dossiers
@@ -100,7 +139,6 @@ def est_une_playlist(url):
 def obtenir_nom_playlist(url):
     """
     Récupère le titre de la playlist SANS télécharger les vidéos.
-    Utilise extract_flat='in_playlist' pour rester rapide.
     """
     options_info = {
         'quiet': True,
@@ -125,46 +163,51 @@ def obtenir_nom_playlist(url):
         return "Playlist_Inconnue"
 
 
-def verifier_ffmpeg(afficher_message=True):
-    """
-    Vérifie que ffmpeg est installé et accessible.
-    afficher_message=False permet de l'utiliser silencieusement.
-    """
-    chemin_ffmpeg = shutil.which("ffmpeg")
-
-    if chemin_ffmpeg is None:
-        if afficher_message:
-            print("❌ ERREUR : ffmpeg n'est pas installé ou pas dans le PATH.")
-            print("   Télécharge-le ici : https://ffmpeg.org/download.html")
-        return False
-
-    return True
-
 # ---------------------------------------------------------
 # Construction des options yt-dlp
 # ---------------------------------------------------------
 
-def construire_options(config, dossier_sortie, hook_progression=None):
+def construire_options(config, dossier_sortie, nom_playlist=None, est_playlist=False, hook=None):
+    """
+    Construit le dictionnaire d'options pour yt-dlp.
+    """
     chemin_ffmpeg = obtenir_chemin_ffmpeg()
+
+    template_nom = config.get('nom_fichier', '%(title)s.%(ext)s')
 
     options = {
         'format': 'bestaudio/best',
-        'outtmpl': os.path.join(dossier_sortie, '%(title)s.%(ext)s'),
-        'quiet': config['silencieux'],
-        'no_warnings': config['silencieux'],
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': config['format_audio'],
-            'preferredquality': config['qualite_audio'],
-        }],
+        'outtmpl': os.path.join(dossier_sortie, template_nom),
+        'quiet': config.get('silencieux', False),
+        'no_warnings': config.get('silencieux', False),
+        'retries': config.get('retries', 3),
+        'ignoreerrors': True,
+        'postprocessors': [
+            {
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': config.get('format', 'mp3'),
+                'preferredquality': config.get('qualite', '192'),
+            },
+            {
+                'key': 'FFmpegMetadata',
+                'add_metadata': True,
+            },
+            {
+                'key': 'EmbedThumbnail',
+            },
+        ],
+        'writethumbnail': True,
     }
 
-    # Indique explicitement où trouver ffmpeg si on l'a récupéré
     if chemin_ffmpeg:
         options['ffmpeg_location'] = chemin_ffmpeg
 
-    if hook_progression:
-        options['progress_hooks'] = [hook_progression]
+    if not est_playlist:
+        # Pour une vidéo simple, on ignore toute playlist potentielle
+        options['noplaylist'] = True
+
+    hook_choisi = hook if hook else hook_progression
+    options['progress_hooks'] = [hook_choisi]
 
     return options
 
@@ -175,6 +218,9 @@ def verifier_resultat_telechargement(dossier, format_attendu):
     inattendu (webm, m4a...) qui indiqueraient un échec de conversion.
     """
     fichiers_suspects = []
+
+    if not os.path.isdir(dossier):
+        return True
 
     for fichier in os.listdir(dossier):
         chemin = os.path.join(dossier, fichier)
@@ -191,6 +237,7 @@ def verifier_resultat_telechargement(dossier, format_attendu):
         print("   → Vérifie que ffmpeg fonctionne correctement.\n")
 
     return len(fichiers_suspects) == 0
+
 
 # ---------------------------------------------------------
 # Correction des métadonnées après téléchargement
@@ -211,7 +258,6 @@ def corriger_numeros_de_piste(dossier, format_audio):
 
         chemin = os.path.join(dossier, fichier)
 
-        # On extrait le numéro en début de nom (ex: "03 - Titre.mp3" → "03")
         match = re.match(r'^(\d+)', fichier)
         if not match:
             continue
@@ -224,11 +270,11 @@ def corriger_numeros_de_piste(dossier, format_audio):
                 continue
             if audio.tags is None:
                 audio.add_tags()
-
             audio["tracknumber"] = numero
             audio.save()
         except Exception as e:
             print(f"⚠️  Impossible de corriger le n° de piste pour {fichier} : {e}")
+
 
 # ---------------------------------------------------------
 # Téléchargement
@@ -239,7 +285,6 @@ def telecharger_une_tache(tache, dossier_de_base, config, retourner_fichiers=Fal
     Télécharge une seule tâche (playlist ou vidéo simple).
     tache : dictionnaire avec 'url', 'dossier', 'type'
     """
-
     fichiers_avant = set()
     if retourner_fichiers and os.path.exists(dossier_de_base):
         for racine, _, fichiers in os.walk(dossier_de_base):
@@ -259,8 +304,11 @@ def telecharger_une_tache(tache, dossier_de_base, config, retourner_fichiers=Fal
         dossier_final = os.path.join(dossier_de_base, nom_playlist)
         print(f"📀 Playlist : '{nom_playlist}'")
     else:
+        url = nettoyer_url_video_simple(url)
         dossier_final = dossier_de_base
         print("🎵 Vidéo simple (playlist ignorée si présente dans l'URL).")
+
+    os.makedirs(dossier_final, exist_ok=True)
 
     options = construire_options(
         config,
@@ -278,11 +326,11 @@ def telecharger_une_tache(tache, dossier_de_base, config, retourner_fichiers=Fal
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
 
-        verifier_resultat_telechargement(dossier_final, config['format'])
+        verifier_resultat_telechargement(dossier_final, config.get('format', 'mp3'))
 
         if est_playlist:
             print("\n🔧 Correction des numéros de piste...")
-            corriger_numeros_de_piste(dossier_final, config['format'])
+            corriger_numeros_de_piste(dossier_final, config.get('format', 'mp3'))
 
         if retourner_fichiers:
             fichiers_apres = set()
@@ -300,13 +348,13 @@ def telecharger_une_tache(tache, dossier_de_base, config, retourner_fichiers=Fal
         message = f"❌ Erreur de téléchargement pour {url} : {e}"
         print(f"\n{message}")
         ecrire_log(config.get('log'), message)
-        return False
+        return (False, []) if retourner_fichiers else False
 
     except Exception as e:
         message = f"❌ Erreur inattendue pour {url} : {e}"
         print(f"\n{message}")
         ecrire_log(config.get('log'), message)
-        return False
+        return (False, []) if retourner_fichiers else False
 
 
 def telecharger_toutes_les_taches(config):
@@ -329,10 +377,10 @@ def telecharger_toutes_les_taches(config):
     for i, tache in enumerate(taches, start=1):
         print(f"\n--- Tâche {i}/{len(taches)} ---")
 
-        # Si un dossier spécifique est défini pour cette tâche
         dossier_tache = tache.get('dossier', '')
         if dossier_tache and dossier_tache != dossier_de_base:
-            dossier_cible = os.path.join(dossier_de_base, dossier_tache)
+            dossier_cible = os.path.join(dossier_de_base, dossier_tache) \
+                if not os.path.isabs(dossier_tache) else dossier_tache
         else:
             dossier_cible = dossier_de_base
 
@@ -343,7 +391,6 @@ def telecharger_toutes_les_taches(config):
             "succes": succes
         })
 
-    # --- Résumé final ---
     print("\n" + "=" * 50)
     print("📊 RÉSUMÉ DU TÉLÉCHARGEMENT")
     print("=" * 50)
