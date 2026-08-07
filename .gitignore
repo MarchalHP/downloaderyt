@@ -22,3 +22,5 @@ taches_temp*.json
 # OS
 .DS_Store
 Thumbs.db
+config.json
+progression.json
