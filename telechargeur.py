@@ -197,11 +197,6 @@ def construire_options(config, dossier_sortie, nom_playlist=None, est_playlist=F
             },
         ],
         'writethumbnail': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['tv_embedded', 'web'],
-            }
-        },
     }
 
     if chemin_ffmpeg:
